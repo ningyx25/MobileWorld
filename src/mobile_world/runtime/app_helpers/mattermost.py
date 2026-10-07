@@ -5,6 +5,7 @@ import subprocess
 import time
 
 import psycopg2
+import requests
 from loguru import logger
 from psycopg2 import Error
 
@@ -37,6 +38,20 @@ USERS = {
     "sofia": "sofia.garcia@neuralforge.ai",
 }
 DEFAULT_PASSWORD = "password"
+
+MATTERMOST_API_URL = "http://127.0.0.1:8065"
+MATTERMOST_READY_TIMEOUT = 120.0
+MATTERMOST_READY_POLL_INTERVAL = 2.0
+
+
+class MattermostSetupError(RuntimeError):
+    """A Mattermost setup step failed while a task was initializing.
+
+    Raised rather than returned so a hook that forgets to check a return value
+    cannot silently succeed: it propagates out of initialize_task_hook ->
+    BaseTask.initialize_task -> POST /task/init, which turns it into a 500 with
+    a readable detail message.
+    """
 
 
 class MattermostCLI:
@@ -136,7 +151,10 @@ rm -f /tmp/mmctl_pass.txt
             password: The user's password
 
         Returns:
-            bool: True if login successful, False otherwise
+            bool: True if login successful.
+
+        Raises:
+            MattermostSetupError: if login and the password-reset fallback both failed.
         """
         # First attempt
         if password is not None and self._login_attempt(username, password):
@@ -148,7 +166,7 @@ rm -f /tmp/mmctl_pass.txt
         # Try to reset password using admin account
         if not self._reset_user_password(username, DEFAULT_PASSWORD):
             logger.error(f"✗ Failed to reset password for {username}")
-            return False
+            raise MattermostSetupError(f"could not reset password for {username}")
 
         # Retry login after password reset
         if self._login_attempt(username, DEFAULT_PASSWORD):
@@ -156,7 +174,7 @@ rm -f /tmp/mmctl_pass.txt
             return True
 
         logger.error(f"✗ Login still failed after password reset for {username}")
-        return False
+        raise MattermostSetupError(f"mmctl login failed for {username}")
 
     def logout(self) -> bool:
         """Clean up authentication credentials."""
@@ -204,9 +222,10 @@ rm -f /tmp/mmctl_pass.txt
         if returncode == 0 and "successfully created" in stdout:
             logger.info(f"Channel '{channel_name}' created successfully")
             return True
-        else:
-            logger.error(f"Failed to create channel: {stderr or stdout}")
-            return False
+        logger.error(f"Failed to create channel: {stderr or stdout}")
+        raise MattermostSetupError(
+            f"failed to create channel '{team}:{channel_name}': {(stderr or stdout).strip()[:200]}"
+        )
 
     def send_message(self, team: str, channel: str, message: str, reply_to: str = None) -> bool:
         """
@@ -234,9 +253,10 @@ rm -f /tmp/mmctl_pass.txt
         if returncode == 0:
             logger.info(f"Message sent to {team}:{channel}")
             return True
-        else:
-            logger.error(f"Failed to send message: {stderr or stdout}")
-            return False
+        logger.error(f"Failed to send message: {stderr or stdout}")
+        raise MattermostSetupError(
+            f"failed to send message to {team}:{channel}: {(stderr or stdout).strip()[:200]}"
+        )
 
     def add_users_to_channel(self, team: str, channel: str, users: list[str]) -> bool:
         """
@@ -258,9 +278,10 @@ rm -f /tmp/mmctl_pass.txt
         if returncode == 0:
             logger.info(f"Users added to {team}:{channel}")
             return True
-        else:
-            logger.error(f"Failed to add users: {stderr or stdout}")
-            return False
+        logger.error(f"Failed to add users: {stderr or stdout}")
+        raise MattermostSetupError(
+            f"failed to add users to {team}:{channel}: {(stderr or stdout).strip()[:200]}"
+        )
 
     def list_channels(self, team: str) -> list[str]:
         """
@@ -569,10 +590,92 @@ def _extend_session_expiry():
     return False
 
 
+def _mattermost_api_ready() -> bool:
+    """True when the Mattermost API is up and its auth path answers.
+
+    ``GET /system/ping`` only proves the HTTP layer is listening; login can
+    still be rejected while Mattermost finishes booting. ``POST /users/login``
+    is the exact call mmctl makes, so accept 200 (valid credentials) or 401
+    (credentials rejected => the API and its database are alive). Any other
+    status or a connection error means "not ready yet".
+    """
+    try:
+        ping = requests.get(f"{MATTERMOST_API_URL}/api/v4/system/ping", timeout=3)
+        if ping.status_code != 200 or ping.json().get("status") != "OK":
+            return False
+    except (requests.RequestException, ValueError):
+        return False
+
+    try:
+        resp = requests.post(
+            f"{MATTERMOST_API_URL}/api/v4/users/login",
+            # ``login_id`` is the field the official clients use (verified in
+            # the 10.5.2 webapp bundle); ``username`` would be a 400.
+            json={"login_id": SAM_ACCOUNT["username"], "password": SAM_ACCOUNT["password"]},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            timeout=5,
+        )
+    except requests.RequestException:
+        return False
+
+    if resp.status_code not in (200, 401):
+        return False
+    if resp.status_code == 200:
+        token = resp.headers.get("Token")
+        if token:  # do not leak a session row just to probe
+            try:
+                requests.post(
+                    f"{MATTERMOST_API_URL}/api/v4/users/logout",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=3,
+                )
+            except requests.RequestException:
+                pass
+    return True
+
+
+def wait_for_mattermost_ready(
+    timeout: float = MATTERMOST_READY_TIMEOUT,
+    poll_interval: float = MATTERMOST_READY_POLL_INTERVAL,
+) -> bool:
+    """Poll the Mattermost API until it accepts logins (or *timeout* elapses).
+
+    ``docker compose up -d`` returns as soon as the containers are created;
+    the API rejects logins for another ~12s (measured). Every task hook runs
+    mmctl commands immediately afterwards, so returning early means the
+    channels and messages they create are silently lost.
+    """
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        if _mattermost_api_ready():
+            logger.info(f"Mattermost API ready after {attempt} probe(s)")
+            return True
+        if time.monotonic() >= deadline:
+            logger.error(
+                f"Mattermost API not ready after {timeout:.0f}s "
+                f"({attempt} probes, {MATTERMOST_API_URL})"
+            )
+            return False
+        logger.debug(
+            f"Mattermost API not ready yet (probe {attempt}); retrying in {poll_interval}s"
+        )
+        time.sleep(poll_interval)
+
+
 def start_mattermost_backend(mattermost_backend_status_dir=MATTERMOST_STATUS_DIR):
-    """Start the Mattermost backend."""
+    """Start the Mattermost backend.
+
+    Returns only once the API accepts logins, so callers can immediately run
+    mmctl commands against it.
+
+    Raises:
+        MattermostSetupError: if the stack fails to start or the API never
+            becomes ready within ``MATTERMOST_READY_TIMEOUT``.
+    """
     status = get_mattermost_backend_status()
-    if status == "running":
+    if status in ("running", "partial"):
         logger.info("Mattermost backend is already running, stop and reset it to default")
         stop_mattermost_backend()
     shutil.rmtree(MATTERMOST_DOCKER_DIR, ignore_errors=True)
@@ -595,13 +698,25 @@ def start_mattermost_backend(mattermost_backend_status_dir=MATTERMOST_STATUS_DIR
         )
 
         # Extend existing session expiry while only postgres is running.
-        _extend_session_expiry()
+        if not _extend_session_expiry():
+            logger.warning(
+                "Could not extend Mattermost session expiry; the Android app "
+                "may end up logged out (see fix c532c19)"
+            )
 
         # Now bring up the Mattermost server.
         cmd = ["docker", "compose"] + COMPOSE_FILES + ["up", "-d"]
         result = subprocess.run(
             cmd, cwd=MATTERMOST_DOCKER_DIR, capture_output=True, text=True, check=True
         )
+
+        # docker compose up -d returns before the API accepts logins; task
+        # hooks run mmctl commands immediately afterwards.
+        if not wait_for_mattermost_ready():
+            raise MattermostSetupError(
+                f"Mattermost API at {MATTERMOST_API_URL} not ready after "
+                f"{MATTERMOST_READY_TIMEOUT:.0f}s"
+            )
         logger.info("Mattermost backend started successfully")
         logger.debug(f"Docker compose output: {result.stdout}\n{result.stderr}")
 
@@ -609,10 +724,12 @@ def start_mattermost_backend(mattermost_backend_status_dir=MATTERMOST_STATUS_DIR
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to start Mattermost backend: {e}")
         logger.error(f"Error output: {e.stderr}")
-        return False
+        raise MattermostSetupError(f"docker compose up failed: {e.stderr or e}") from e
+    except MattermostSetupError:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error starting Mattermost backend: {e}")
-        return False
+        raise MattermostSetupError(f"unexpected error starting Mattermost backend: {e}") from e
 
 
 def stop_mattermost_backend():
@@ -652,10 +769,8 @@ def restart_mattermost_backend():
 
     time.sleep(2)
 
-    # Start the backend
-    if not start_mattermost_backend():
-        logger.error("Failed to start Mattermost backend during restart")
-        return False
+    # Start the backend (raises MattermostSetupError on failure)
+    start_mattermost_backend()
 
     logger.info("Mattermost backend restarted successfully")
     return True
