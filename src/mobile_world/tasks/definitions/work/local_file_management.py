@@ -45,8 +45,13 @@ class LocalFileManagementTask(BaseTask):
         if len(existing_files) != 19:
             return 0.0, f"Other files are deleted: {existing_files}"
         # check 3: the last message is sent from harry to harry and contains the list of deleted files
-        last_message = mattermost.get_latest_messages()[0]
+        messages = mattermost.get_latest_messages() or []
+        if not messages:
+            return 0.0, "No messages found in Mattermost"
+        last_message = messages[0]
         channel_info = mattermost.get_channel_info(last_message[5])
+        if not channel_info:
+            return 0.0, "Channel for the last message not found"
         if (
             last_message[4] != mattermost.HARRY_ID
             or channel_info[7] != f"{mattermost.HARRY_ID}__{mattermost.HARRY_ID}"

@@ -1,6 +1,5 @@
 """Incident escalation task - monitor support tickets and escalate critical issues."""
 
-import time
 from datetime import datetime, timedelta
 
 from mobile_world.runtime.app_helpers import mattermost
@@ -40,7 +39,6 @@ class MattermostIncidentEscalationTask(BaseTask):
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         cli = mattermost.MattermostCLI()
         cli.login(USERS["alex"], DEFAULT_PASSWORD)

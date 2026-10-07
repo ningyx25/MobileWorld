@@ -1,6 +1,5 @@
 """Shift coverage task - manage shift swap requests via Mattermost and Calendar."""
 
-import time
 from datetime import datetime, timedelta
 
 from mobile_world.runtime.app_helpers import mattermost
@@ -54,7 +53,6 @@ class MattermostShiftCoverageTask(BaseTask):
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         cli = mattermost.MattermostCLI()
         cli.login(USERS["alex"], DEFAULT_PASSWORD)
@@ -108,8 +106,10 @@ class MattermostShiftCoverageTask(BaseTask):
         assert mattermost.is_mattermost_healthy()
 
         # Check messages
-        messages = mattermost.get_latest_messages()[:20]
+        messages = (mattermost.get_latest_messages() or [])[:20]
         channel_info = mattermost.get_channel_info(channel_name=self.CHANNEL_NAME)
+        if not channel_info:
+            return 0.0, f"Channel '{self.CHANNEL_NAME}' not found"
 
         channel_messages = [m for m in messages if m[5] == channel_info[0]]
 

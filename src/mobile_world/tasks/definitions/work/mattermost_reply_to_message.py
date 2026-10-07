@@ -26,7 +26,10 @@ class MattermostReplyToMessageTask(BaseTask):
         # to check if the task is successful, we need the mattermost backend to be running
         assert mattermost.is_mattermost_healthy()
 
-        message = mattermost.get_latest_messages()[0]
+        messages = mattermost.get_latest_messages() or []
+        if not messages:
+            return 0.0, "No messages found in Mattermost"
+        message = messages[0]
         if message[6] != self.EARLIER_MSG_ID:
             return 0.0, "Message not replied to harry's own earlier message"
         if "35.5" not in message[8]:

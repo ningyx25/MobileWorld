@@ -1,7 +1,6 @@
 """Cross-platform project status aggregation - collect updates from multiple channels and generate risk-assessed report."""
 
 import re
-import time
 from datetime import datetime, timedelta
 
 from mobile_world.runtime.app_helpers import mattermost
@@ -70,7 +69,6 @@ class MattermostProjectStatusReportTask(BaseTask):
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         dates = self._dates
         cli = mattermost.MattermostCLI()
@@ -242,8 +240,10 @@ class MattermostProjectStatusReportTask(BaseTask):
                 return 0.0, f"Escalation event for '{blocked_item}' not created"
 
         channel_info = mattermost.get_channel_info(channel_name=self.SYNC_CHANNEL)
+        if not channel_info:
+            return 0.0, f"Channel '{self.SYNC_CHANNEL}' not found"
 
-        messages = mattermost.get_latest_messages()[:10]
+        messages = (mattermost.get_latest_messages() or [])[:10]
         channel_messages = [m for m in messages if m[5] == channel_info[0]]
 
         summary_found = False

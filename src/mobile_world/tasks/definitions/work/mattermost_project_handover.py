@@ -31,7 +31,10 @@ class MattermostProjectHandoverTask(BaseTask):
         )
         if not alex_added:
             return 0.0, "Alex has not been added to the phoenix channel"
-        message = mattermost.get_latest_messages()[0]
+        messages = mattermost.get_latest_messages() or []
+        if not messages:
+            return 0.0, "No messages found in Mattermost"
+        message = messages[0]
         if message[4] != mattermost.HARRY_ID or message[5] != mattermost.PHOENIX_CHANNEL_ID:
             return 0.0, "Last message is not sent to harry in the phoenix channel"
         pattern = r"Meeting Time:\s*(\d{4}-\d{2}-\d{2})\s+from\s+(\d{2}:\d{2})\s+to\s+(\d{2}:\d{2})"

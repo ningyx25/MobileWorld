@@ -27,10 +27,13 @@ class MattermostCreateChannelTask(BaseTask):
         channel_info = mattermost.get_channel_info(channel_name="reading")
         if channel_info is None:
             return 0.0, "Channel not created"
-        members = mattermost.get_users_in_channel(channel_info[0])
+        members = mattermost.get_users_in_channel(channel_info[0]) or []
         if len(members) != 11:
             return 0.0, "Number of members in the channel is not correct"
-        last_message = mattermost.get_latest_messages()[0]
+        messages = mattermost.get_latest_messages() or []
+        if not messages:
+            return 0.0, "No messages found in Mattermost"
+        last_message = messages[0]
         if last_message[5] != channel_info[0]:
             return 0.0, "Last message is not sent to the channel"
         return 1.0

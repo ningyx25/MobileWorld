@@ -30,13 +30,18 @@ class MattermostSendFileTask(BaseTask):
         # to check if the task is successful, we need the mattermost backend to be running
         assert mattermost.is_mattermost_healthy()
 
-        message = mattermost.get_latest_messages()[0]
+        messages = mattermost.get_latest_messages() or []
+        if not messages:
+            return 0.0, "No messages found in Mattermost"
+        message = messages[0]
         channel_info = mattermost.get_channel_info(message[5])
+        if not channel_info:
+            return 0.0, "Channel for the last message not found"
         if channel_info[13] != mattermost.ALEX_ID:
             return 0.0, "Message not sent to alex privately"
         if "birthday" not in message[8].lower():
             return 0.0, "Message not sent with birthday message"
-        file_id_list = json.loads(message[13])
+        file_id_list = json.loads(message[13] or "[]")
         if len(file_id_list) != 1:
             return 0.0, "Birthday cake image not uploaded or too many files uploaded"
         file_path = mattermost.get_file_info(file_id_list[0], return_path=True)

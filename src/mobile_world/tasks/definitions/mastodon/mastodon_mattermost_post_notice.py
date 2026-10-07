@@ -24,7 +24,7 @@ class MastodonMattermostPostNoticeTask(BaseTask):
 
     app_names = {"Mastodon", "Mattermost"}
 
-    def initialize_task_hook(self, controller: AndroidController) -> None:
+    def initialize_task_hook(self, controller: AndroidController) -> bool:
         try:
             mastodon.start_mastodon_backend()
             mattermost.start_mattermost_backend()

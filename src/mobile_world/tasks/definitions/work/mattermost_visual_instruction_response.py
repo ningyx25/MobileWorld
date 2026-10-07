@@ -1,7 +1,5 @@
 """Visual instruction response task - execute system actions based on image content in chat."""
 
-import time
-
 from mobile_world.runtime.app_helpers import mattermost
 from mobile_world.runtime.app_helpers.mattermost import DEFAULT_PASSWORD, USERS
 from mobile_world.runtime.app_helpers.system import (
@@ -57,7 +55,6 @@ class MattermostVisualInstructionResponseTask(BaseTask):
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         cli = mattermost.MattermostCLI()
         cli.login(USERS["alex"], DEFAULT_PASSWORD)

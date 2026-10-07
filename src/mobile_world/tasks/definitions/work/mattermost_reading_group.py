@@ -1,7 +1,5 @@
 """Mattermost email task implementation - send contract via email and create calendar event."""
 
-import time
-
 from mobile_world.runtime.app_helpers import mattermost
 from mobile_world.runtime.app_helpers.system import enable_auto_time_sync
 from mobile_world.runtime.controller import AndroidController
@@ -17,9 +15,8 @@ class MattermostReadingGroupTask(BaseTask):
 
     app_names = {"Mattermost", "Chrome"}
 
-    def initialize_task_hook(self, controller: AndroidController) -> None:
+    def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
         cli = mattermost.MattermostCLI()
         cli.login(mattermost.SAM_ACCOUNT["username"], mattermost.SAM_ACCOUNT["password"])
         cli.create_channel(
@@ -49,9 +46,10 @@ class MattermostReadingGroupTask(BaseTask):
         assert mattermost.is_mattermost_healthy()
 
         channel_info = mattermost.get_channel_info(channel_name="reading")
-        assert channel_info is not None
+        if channel_info is None:
+            return 0.0, "Channel 'reading' not found"
 
-        messages = mattermost.get_latest_messages()[:5]
+        messages = (mattermost.get_latest_messages() or [])[:5]
         paper_mentioned = False
         mmmu_pro_score_mentioned = False
         for message in messages:

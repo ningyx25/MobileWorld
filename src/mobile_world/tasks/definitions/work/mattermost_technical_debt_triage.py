@@ -1,7 +1,6 @@
 """Technical debt triage task - parse complexity metrics and prioritize refactoring work."""
 
 import re
-import time
 
 from mobile_world.runtime.app_helpers import mattermost
 from mobile_world.runtime.app_helpers.mattermost import DEFAULT_PASSWORD, USERS
@@ -106,7 +105,6 @@ class MattermostTechnicalDebtTriageTask(BaseTask):
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         cli = mattermost.MattermostCLI()
         cli.login(USERS["alex"], DEFAULT_PASSWORD)

@@ -1,7 +1,6 @@
 """Calendar-aware meeting planning task with route constraints via Mattermost coordination."""
 
 import re
-import time
 from datetime import datetime, timedelta
 
 from mobile_world.runtime.app_helpers import mattermost
@@ -84,7 +83,6 @@ class MattermostMeetingPlanningTask(BaseTask):
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         # Start mattermost backend
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         dates = self._dates
 

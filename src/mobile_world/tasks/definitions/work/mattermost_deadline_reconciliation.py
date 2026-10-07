@@ -1,6 +1,5 @@
 """Cross-platform deadline reconciliation task - verify deadlines mentioned in chat have calendar events."""
 
-import time
 from datetime import datetime, timedelta
 
 from mobile_world.runtime.app_helpers import mattermost
@@ -83,7 +82,6 @@ class MattermostDeadlineReconciliationTask(BaseTask):
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         # Start mattermost backend
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         dates = self._dates
 
@@ -240,7 +238,9 @@ class MattermostDeadlineReconciliationTask(BaseTask):
 
         # Check 6: Confirmation posted in channel with event titles
         channel_info = mattermost.get_channel_info(channel_name=self.CHANNEL_NAME)
-        messages = mattermost.get_latest_messages()[:10]
+        if not channel_info:
+            return 0.0, f"Channel '{self.CHANNEL_NAME}' not found"
+        messages = (mattermost.get_latest_messages() or [])[:10]
         channel_messages = [m for m in messages if m[5] == channel_info[0]]
 
         # Check if harry posted confirmation containing the auto-created event titles

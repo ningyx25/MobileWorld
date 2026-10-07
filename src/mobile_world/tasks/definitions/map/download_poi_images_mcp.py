@@ -81,7 +81,10 @@ class DownloadPoiImagesMcpTask(BaseTask):
         self._check_is_initialized()
         assert mattermost.is_mattermost_healthy()
 
-        latest_post = mattermost.get_latest_messages()[0]
+        messages = mattermost.get_latest_messages() or []
+        if not messages:
+            return 0.0, "No messages found in Mattermost"
+        latest_post = messages[0]
         if (
             latest_post[4] != mattermost.HARRY_ID
             or latest_post[5] != mattermost.SAM_HARRY_CHANNEL_ID

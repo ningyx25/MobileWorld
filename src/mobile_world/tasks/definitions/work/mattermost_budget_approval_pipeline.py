@@ -1,7 +1,6 @@
 """Budget approval pipeline task - analyze budget requests and set up approval workflow."""
 
 import re
-import time
 
 from mobile_world.runtime.app_helpers import mattermost
 from mobile_world.runtime.app_helpers.mattermost import DEFAULT_PASSWORD, USERS
@@ -174,7 +173,6 @@ class MattermostBudgetApprovalPipelineTask(BaseTask):
 
     def initialize_task_hook(self, controller: AndroidController) -> bool:
         mattermost.start_mattermost_backend()
-        time.sleep(5)
 
         cli = mattermost.MattermostCLI()
         cli.login(USERS["alex"], DEFAULT_PASSWORD)
