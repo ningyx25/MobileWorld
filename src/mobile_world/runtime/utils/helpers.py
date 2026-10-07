@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime, timedelta
 
 from loguru import logger
+from PIL import Image
 from pydantic import BaseModel
 
 
@@ -105,6 +106,47 @@ def pretty_print_messages(messages: list[dict], max_messages: int = 2) -> None:
 
     final_str += f"messages:\n{json.dumps(messages_print, indent=2, ensure_ascii=False)}"
     logger.info(final_str)
+
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_PNG_IEND_CHUNK = b"\x00\x00\x00\x00IEND\xaeB`\x82"
+_TAIL_SCAN_BYTES = 32
+
+
+def is_complete_png_file(path) -> bool:
+    """True when ``path`` holds a structurally complete PNG.
+
+    ``adb exec-out screencap -p > f`` can exit 0 while writing a truncated
+    file: the result is a strict prefix of a valid PNG, so the IEND chunk is
+    missing from the tail while the IHDR header still parses. Cheap check:
+    one stat, an 8-byte header read and a 32-byte tail read.
+    """
+    try:
+        size = os.path.getsize(path)
+        if size < 24:
+            return False
+        with open(path, "rb") as f:
+            if f.read(8) != _PNG_MAGIC:
+                return False
+            f.seek(size - _TAIL_SCAN_BYTES)
+            return _PNG_IEND_CHUNK in f.read(_TAIL_SCAN_BYTES)
+    except OSError:
+        return False
+
+
+def verify_png_file(path) -> bool:
+    """Deep integrity check for a PNG file.
+
+    ``Image.open(...).verify()`` walks the chunks and their CRCs without
+    decoding pixels (~0.5 ms for a screenshot, vs ~10 ms for a full decode),
+    so a corrupt-but-complete file is caught before it is served.
+    """
+    try:
+        with Image.open(path) as img:
+            img.verify()
+        return True
+    except Exception:  # noqa: BLE001 - any failure means "not usable"
+        return False
 
 
 def execute_adb(adb_command: str, output: bool = True, root_required=False) -> AdbResponse:

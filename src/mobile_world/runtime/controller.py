@@ -9,7 +9,9 @@ from loguru import logger
 from mobile_world.runtime.utils.helpers import (
     AdbResponse,
     execute_adb,
+    is_complete_png_file,
     time_within_ten_secs,
+    verify_png_file,
 )
 from mobile_world.runtime.utils.models import APP_DICT, COMMON_APP_MAPPER
 
@@ -55,34 +57,62 @@ class AndroidController:
         )
         local_path = os.path.join(save_dir, prefix + ".png")
 
-        # try the stealth API first, otherwise screenshot
-        # may trigger events in some apps
         stealth_command = f"adb -s {self.device} exec-out screencap -p > {local_path}"
-        stealth_result = execute_adb(stealth_command)
-        if stealth_result.success:
-            return AdbResponse(success=True, output=local_path, command=stealth_command)
-
         cap_command = f"adb -s {self.device} shell screencap -p {remote_path}"
         pull_command = f"adb -s {self.device} pull {remote_path} {local_path}"
         rm_command = f"adb -s {self.device} shell rm {remote_path}"
 
-        cap_result = execute_adb(cap_command)
-        if cap_result.success:
-            result = execute_adb(pull_command)
+        attempts = max(1, try_times + 1)
+        errors: list[str] = []
 
-            if not result.success and try_times > 0:
-                # occasionally the pull command fails at file not found, so we try again, likely due to file not finished being written yet
-                time.sleep(1)
-                return self.get_screenshot(prefix, save_dir, try_times - 1)
-            elif not result.success and try_times <= 0:
-                execute_adb(rm_command, output=False)
-                return AdbResponse(
-                    success=False, error=result.error + cap_result.output, command=pull_command
+        for attempt in range(attempts):
+            # try the stealth API first, otherwise screenshot
+            # may trigger events in some apps. ``exec-out`` can exit 0 while
+            # writing a truncated PNG, so a successful exit code is not enough:
+            # the file must be a complete, verifiable image.
+            stealth_result = execute_adb(stealth_command)
+            if (
+                stealth_result.success
+                and is_complete_png_file(local_path)
+                and verify_png_file(local_path)
+            ):
+                return AdbResponse(success=True, output=local_path, command=stealth_command)
+            errors.append(
+                "exec-out produced an invalid PNG"
+                if stealth_result.success
+                else (stealth_result.error or "exec-out failed")
+            )
+
+            cap_result = execute_adb(cap_command)
+            if cap_result.success:
+                pull_result = execute_adb(pull_command)
+                if (
+                    pull_result.success
+                    and is_complete_png_file(local_path)
+                    and verify_png_file(local_path)
+                ):
+                    execute_adb(rm_command, output=False)
+                    return AdbResponse(success=True, output=local_path, command=pull_command)
+                errors.append(
+                    "pull produced an invalid PNG"
+                    if pull_result.success
+                    else (pull_result.error or "pull failed")
                 )
             else:
-                execute_adb(rm_command, output=False)
-                return AdbResponse(success=True, output=local_path, command=pull_command)
-        return cap_result
+                errors.append(cap_result.error or "screencap failed")
+            execute_adb(rm_command, output=False)
+
+            if attempt + 1 < attempts:
+                # occasionally the pull command fails at file not found, or the
+                # device is briefly busy; give it a moment before the next round
+                time.sleep(1)
+
+        logger.error(f"screencap failed for {self.device}: {'; '.join(errors[-4:])}")
+        return AdbResponse(
+            success=False,
+            error="; ".join(errors[-4:]) or "screenshot capture failed",
+            command=stealth_command,
+        )
 
     def get_xml(self, prefix, save_dir):
         remote_path = os.path.join(self.xml_dir, prefix + ".xml").replace(self.backslash, "/")
