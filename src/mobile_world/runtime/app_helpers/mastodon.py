@@ -31,6 +31,8 @@ MASTODON_STATUS_DIR = "/app/mastodon-docker-bk"
 
 MASTODON_HEALTH_URL = "https://localhost/api/v1/instance"  # need host header 10.0.2.2
 
+MASTODON_READY_TIMEOUT = 90.0  # bounded wait for the backend to accept requests
+
 PUBLIC_SYSTEM_ROOT = "/opt/mastodon/public/system"  # media directory inside the container
 MEDIA_ROOT = "/app/mastodon-docker/data/media"  # for docker-in-docker development
 
@@ -134,8 +136,13 @@ def start_mastodon_backend(mastodon_backend_status_dir=MASTODON_STATUS_DIR) -> b
         cmd = ["docker", "compose", "up", "-d"]
         subprocess.run(cmd, cwd=MASTODON_DOCKER_DIR, capture_output=True, text=True, check=True)
 
-        # mastodon backend ready to use check
+        # mastodon backend ready to use check (bounded: an unbounded loop here
+        # would hang POST /task/init forever when the stack never comes up)
+        deadline = time.monotonic() + MASTODON_READY_TIMEOUT
         while not _is_mastodon_ready():
+            if time.monotonic() >= deadline:
+                logger.error(f"Mastodon backend not ready after {MASTODON_READY_TIMEOUT:.0f}s")
+                return False
             time.sleep(3)
 
         return True
