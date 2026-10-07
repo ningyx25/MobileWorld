@@ -520,11 +520,15 @@ def init_task(req: TaskOperationRequest):
     ctr = ensure_controller(req.req_device)
     try:
         task = task_registry.get_task(req.task_name)
-        task.initialize_task(ctr)
+        initialized = task.initialize_task(ctr)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[TASK_INIT] Error initializing task: {e}")
         raise HTTPException(status_code=500, detail=f"Error initializing task: {str(e)}")
-    if not task.initialized:
+    # Trust the return value, not just the ``initialized`` flag: the flag is
+    # per-episode state that a stale singleton could still have set to True.
+    if initialized is False or not task.initialized:
         logger.error(f"[TASK_INIT] Failed to initialize task: {req.task_name}")
         raise HTTPException(status_code=500, detail=f"Failed to initialize task: {req.task_name}")
     global RUNNING_TASK
@@ -542,8 +546,19 @@ def eval_task(req: TaskOperationRequest):
 
     ctr = ensure_controller(req.req_device)
     logger.info(f"[TASK_IS_SUCCESSFUL] Checking if task is successful: {req.task_name}")
-    task = task_registry.get_task(req.task_name)
-    ret = task.is_successful(ctr)
+    try:
+        task = task_registry.get_task(req.task_name)
+        ret = task.is_successful(ctr)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Without this, a crashing grader becomes an opaque "Internal Server
+        # Error" and the actual cause is lost. ``type(e).__name__`` matters:
+        # a bare ``assert`` stringifies to an empty message.
+        logger.exception(f"[TASK_IS_SUCCESSFUL] Error evaluating task {req.task_name}")
+        raise HTTPException(
+            status_code=500, detail=f"Error evaluating task: {type(e).__name__}: {e}"
+        )
     if isinstance(ret, tuple):
         return JSONResponse(status_code=200, content={"score": ret[0], "reason": ret[1]})
     else:
@@ -560,8 +575,16 @@ def tear_down_task(req: TaskOperationRequest):
 
     logger.info(f"[TASK_TEAR_DOWN] Tearing down task: {req.task_name}")
     ctr = ensure_controller(req.req_device)
-    task = task_registry.get_task(req.task_name)
-    task.tear_down(ctr)
+    try:
+        task = task_registry.get_task(req.task_name)
+        task.tear_down(ctr)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"[TASK_TEAR_DOWN] Error tearing down task {req.task_name}")
+        raise HTTPException(
+            status_code=500, detail=f"Error tearing down task: {type(e).__name__}: {e}"
+        )
     global RUNNING_TASK
     RUNNING_TASK = None
     return JSONResponse(status_code=200, content="OK")

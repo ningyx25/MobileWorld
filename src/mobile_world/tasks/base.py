@@ -116,6 +116,7 @@ class BaseTask(abc.ABC):
         self.current_date = self._compute_current_date()  # refresh per episode (singleton reuse)
         if self.initialized:
             logger.warning(f"{self.name} initialized before. Initializing again.")
+        self.initialized = False  # per-episode flag, not a monotonic latch
 
         if self.snapshot_tag is not None:
             logger.debug(f"Loading snapshot: {self.snapshot_tag}")
